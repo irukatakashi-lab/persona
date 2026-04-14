@@ -1,9 +1,10 @@
-from __future__ import annotations
+rom __future__ import annotations
 
 from dataclasses import asdict
 import hashlib
 import json
 import logging
+import re
 from typing import Any
 
 from .fact_sheet import FactSheet
@@ -158,6 +159,10 @@ class PersonaEngine:
         session: SessionState,
         response_language: str,
     ) -> GenerationResult:
+        if self._is_confirmation_question(plan.question_text):
+            return self._confirmation_response(response_language)
+        if self._is_background_documentation_question(plan.question_text):
+            return self._background_documentation_response(response_language)
         if plan.domain == "socioeconomic" and plan.asked_slots:
             return self._generate_fact_first(plan, retrieved_slots, rag_docs, response_language)
         if plan.question_type == "fact_first":
@@ -428,15 +433,19 @@ class PersonaEngine:
                     return f"My highest completed education is a {institution['degree']} in {institution['major']} from {institution['institution_name']}."
                 return f"최종 학력은 {institution['institution_name']} {institution['major']} {institution['degree']} 졸업이야."
         if slot_path == "education.current_program":
+            if not isinstance(value, dict):
+                return self._education_summary(response_language)
+            institution_name = value.get("institution_name")
+            department = value.get("department")
+            advisor_name = value.get("advisor_name")
+            if not institution_name or not department or not advisor_name:
+                return self._education_summary(response_language)
             if response_language == "en":
                 return (
-                    f"I'm affiliated with {value['institution_name']} in {value['department']}, "
-                    f"and my advisor is {value['advisor_name']}."
+                    f"I'm affiliated with {institution_name} in {department}, "
+                    f"and my advisor is {advisor_name}."
                 )
-            return (
-                f'{value["institution_name"]} {value["department"]} 소속이고, '
-                f'지도교수는 {value["advisor_name"]}이야.'
-            )
+            return f'{institution_name} {department} 소속이고, 지도교수는 {advisor_name}이야.'
         if slot_path == "education.current_courses":
             if isinstance(value, list) and value:
                 course = value[0]
@@ -453,6 +462,22 @@ class PersonaEngine:
         if first_sentence.endswith("다"):
             return first_sentence + "."
         return first_sentence
+
+    def _is_confirmation_question(self, question_text: str) -> bool:
+        return bool(re.search(r"(would you confirm|just to confirm|is that right|is that correct|confirm that)", question_text, re.I))
+
+    def _is_background_documentation_question(self, question_text: str) -> bool:
+        return bool(re.search(r"(background documentation|prepared your background|who prepared.*documentation)", question_text, re.I))
+
+    def _confirmation_response(self, response_language: str) -> GenerationResult:
+        if response_language == "en":
+            return GenerationResult(content="Yes, that's right.")
+        return GenerationResult(content="응, 맞아.")
+
+    def _background_documentation_response(self, response_language: str) -> GenerationResult:
+        if response_language == "en":
+            return GenerationResult(content="I don't know who prepared my background documentation.")
+        return GenerationResult(content="내 배경 문서를 누가 준비했는지는 나도 몰라.")
 
     def _identity_summary(self, response_language: str) -> str:
         if response_language == "en":
